@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LAN Chat Host</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #messages { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; }
+        #message-input { width: 70%; padding: 10px; }
+        #send-button { padding: 10px; width: 25%; }
+        .message { margin: 5px 0; padding: 5px; border-radius: 3px; }
+        .local { background: #e3f2fd; text-align: right; }
+        .remote { background: #f1f1f1; }
+    </style>
+</head>
+<body>
+    <h1>LAN Chat Host</h1>
+    <p>Your local IP: <span id="local-ip">Detecting...</span></p>
+    <p>Clients should connect to: <code>ws://<span id="ws-address">your-ip</span>:8080</code></p>
+    
+    <div id="messages"></div>
+    <input type="text" id="message-input" placeholder="Type a message">
+    <button id="send-button">Send</button>
+
+    <script>
+        const messagesEl = document.getElementById('messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const localIpEl = document.getElementById('local-ip');
+        const wsAddressEl = document.getElementById('ws-address');
+        
+        // Detect local IP (for display purposes only)
+        async function detectLocalIP() {
+            try {
+                const peerConnection = new RTCPeerConnection({iceServers: []});
+                peerConnection.createDataChannel('dummy');
+                peerConnection.createOffer().then(offer => peerConnection.setLocalDescription(offer));
+                
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/;
+                        const ipMatch = ipRegex.exec(event.candidate.candidate);
+                        if (ipMatch) {
+                            localIpEl.textContent = ipMatch[1];
+                            wsAddressEl.textContent = ipMatch[1];
+                            peerConnection.onicecandidate = null;
+                            peerConnection.close();
+                        }
+                    }
+                };
+            } catch (err) {
+                console.error("IP detection failed:", err);
+                localIpEl.textContent = "Check your network settings";
+            }
+        }
+        
+        // WebSocket Server (using browser WebSocket API)
+        const clients = new Set();
+        const wsServer = new WebSocket.Server = {
+            start() {
+                const host = location.hostname || 'localhost';
+                this.url = `ws://${host}:8080`;
+                this.socket = new WebSocket(this.url);
+                
+                this.socket.onopen = () => console.log("Host ready");
+                this.socket.onmessage = (e) => {
+                    // Broadcast to all clients
+                    clients.forEach(client => {
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(e.data);
+                        }
+                    });
+                    addMessage(e.data, 'remote');
+                };
+            },
+            
+            addClient(client) {
+                clients.add(client);
+                client.onclose = () => clients.delete(client);
+            }
+        };
+        
+        // Polyfill for WebSocket.Server in browser
+        window.WebSocket.Server = function() {
+            this.start = wsServer.start;
+            this.addClient = wsServer.addClient;
+            return this;
+        };
+        
+        // Start server
+        const wss = new WebSocket.Server();
+        wss.start();
+        
+        // Handle incoming connections from other tabs
+        window.addEventListener('load', () => {
+            // This is a hack to allow multiple tabs to connect
+            const clientSocket = new WebSocket(`ws://${location.hostname}:8080`);
+            clientSocket.onmessage = (e) => addMessage(e.data, 'remote');
+            
+            sendButton.onclick = () => {
+                const message = messageInput.value.trim();
+                if (message) {
+                    clientSocket.send(message);
+                    addMessage(message, 'local');
+                    messageInput.value = '';
+                }
+            };
+            
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendButton.click();
+            });
+        });
+        
+        function addMessage(text, type) {
+            const msgEl = document.createElement('div');
+            msgEl.className = `message ${type}`;
+            msgEl.textContent = text;
+            messagesEl.appendChild(msgEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        
+        detectLocalIP();
+    </script>
+</body>
+</html>
